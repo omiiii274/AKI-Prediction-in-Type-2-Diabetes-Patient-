@@ -1,36 +1,46 @@
 import pandas as pd
 import os
 
-# Updated to match your exact case-sensitive path and subfolder
-DESKTOP_DATA_DIR = os.path.expanduser("~/Desktop/Dissertation/MIMIC-IV Dataset")
-OUTPUT_DIR = "data"
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "raw_cohort.parquet")
+# FILE PATH CONFIGURATION
+RAW_DATA_DIRECTORY = os.path.expanduser("~/Desktop/Dissertation/MIMIC-IV Dataset")
+INPUT_PATIENTS_FILE = os.path.join(RAW_DATA_DIRECTORY, "patients.csv")
 
-def extract_cohort():
-    # Matching your exact file name with the .html extension for now
-    patients_file = os.path.join(DESKTOP_DATA_DIR, "patients.csv")
+OUTPUT_DIRECTORY = "data"
+FINAL_OUTPUT_FILE = os.path.join(OUTPUT_DIRECTORY, "extract_patient_cohort.parquet")
+
+def run_cohort_extraction():
+    print("="*60)
+    print("STARTING SEPARATE PATIENT DEMOGRAPHIC EXTRACTION")
+    print("="*60)
     
-    if not os.path.exists(patients_file):
-        print(f"Error: Could not find {patients_file}")
-        print("Please verify the file name inside your Desktop/Dissertation/MIMIC-IV Dataset/ patients.csv .")
+    # Step 1: Verify that the source dataset file exists
+    if not os.path.exists(INPUT_PATIENTS_FILE):
+        print(f"Error: The source file was not found at: {INPUT_PATIENTS_FILE}")
         return
 
-    print(f"Reading file from: {patients_file}...")
+    print(f"Successfully located source file: {INPUT_PATIENTS_FILE}")
+    print("Reading full patients file into memory...")
+
+    # Step 2: Read the complete file (No nrows limit so you don't lose your study population)
+    raw_dataframe = pd.read_csv(INPUT_PATIENTS_FILE)
     
-    try:
-        # Trying to read it, but warning you below why this might fail
-        df = pd.read_csv(patients_file, nrows=1000)
-        
-        available_cols = [col for col in ['subject_id', 'gender', 'anchor_age'] if col in df.columns]
-        df_cohort = df[available_cols]
-        
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        df_cohort.to_parquet(OUTPUT_FILE, index=False)
-        print("Extraction complete! Check data/raw_cohort.parquet")
-        
-    except Exception as e:
-        print(f"Failed to read the file. Error: {e}")
-        print("\nCRITICAL WARNING: Your file ends in '.html'. If this is an HTML webpage rather than raw data, Pandas cannot parse it. You need to download the actual raw 'patients.csv.gz' file from PhysioNet, not its download link page.")
+    # Step 3: Isolate the demographic dictionary columns
+    # CRITICAL: We must include anchor_year and dod for time-series alignment later
+    target_columns = ["subject_id", "gender", "anchor_age", "anchor_year", "dod"]
+    filtered_cohort_dataframe = raw_dataframe[target_columns]
+    
+    print(f"\n[INFO] Total patient records imported: {len(filtered_cohort_dataframe):,}")
+    print("\nSAMPLE EXTRACTED DATA:")
+    print(filtered_cohort_dataframe.head(5))
+
+    # Step 4: Save the demographic file as a standalone parquet
+    os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+    
+    print(f"\nSaving standalone demographics to: {FINAL_OUTPUT_FILE}")
+    filtered_cohort_dataframe.to_parquet(FINAL_OUTPUT_FILE, index=False)
+    
+    print("STANDALONE EXTRACTION SUCCESSFUL!")
+    print("="*60)
 
 if __name__ == "__main__":
-    extract_cohort()
+    run_cohort_extraction()
