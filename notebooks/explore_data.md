@@ -226,3 +226,148 @@ diabetes_cohort.head(5)
 
 
 
+```python
+
+```
+
+
+```python
+import pandas as pd
+import os
+
+# Point directly to your processed directory
+PROCESSED_DATA_PATH = "../data/processed/kdigo_labeled_features.parquet"
+
+# Check if the file exists from the notebook's relative directory
+if not os.path.exists(PROCESSED_DATA_PATH):
+    print(f"ERROR: Cannot find {PROCESSED_DATA_PATH}. Make sure your pipeline ran successfully.")
+else:
+    # Read the master analytical matrix
+    master_matrix = pd.read_parquet(PROCESSED_DATA_PATH)
+    
+    # 1. Print out the matrix properties
+    print(f"SUCCESS! Master Matrix Loaded Perfectly.")
+    print(f"Final Matrix Size: {master_matrix.shape[0]:,} rows x {master_matrix.shape[1]} columns")
+    
+    # 2. Display Class Balance Target Breakdown
+    print("Target Class Breakdown (KDIGO Stages):")
+    print(master_matrix['kdigo_stage'].value_counts().sort_index())
+    
+    # 3. Render the spreadsheet view inside the notebook window
+    print("Feature Matrix Preview:")
+    display(master_matrix.head(5))
+```
+
+    SUCCESS! Master Matrix Loaded Perfectly.
+    Final Matrix Size: 62,831 rows x 10 columns
+    Target Class Breakdown (KDIGO Stages):
+    kdigo_stage
+    0    53393
+    1     7065
+    2      631
+    3     1742
+    Name: count, dtype: int64
+    Feature Matrix Preview:
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>subject_id</th>
+      <th>hadm_id</th>
+      <th>icd_code</th>
+      <th>icd_version</th>
+      <th>glucose_mean</th>
+      <th>glucose_cv</th>
+      <th>glucose_time_in_range</th>
+      <th>creatinine_slope_24h</th>
+      <th>baseline_creatinine</th>
+      <th>kdigo_stage</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>10000980</td>
+      <td>20897796</td>
+      <td>E1122</td>
+      <td>10</td>
+      <td>159.2</td>
+      <td>4.434816</td>
+      <td>75.0</td>
+      <td>0.2</td>
+      <td>2.4</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>10000980</td>
+      <td>25911675</td>
+      <td>E118</td>
+      <td>10</td>
+      <td>159.2</td>
+      <td>4.434816</td>
+      <td>75.0</td>
+      <td>0.0</td>
+      <td>2.2</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>10000980</td>
+      <td>26913865</td>
+      <td>25000</td>
+      <td>9</td>
+      <td>159.2</td>
+      <td>4.434816</td>
+      <td>75.0</td>
+      <td>0.0</td>
+      <td>2.2</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>10000980</td>
+      <td>29654838</td>
+      <td>25000</td>
+      <td>9</td>
+      <td>159.2</td>
+      <td>4.434816</td>
+      <td>75.0</td>
+      <td>0.0</td>
+      <td>1.4</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>10000980</td>
+      <td>29659838</td>
+      <td>E1121</td>
+      <td>10</td>
+      <td>159.2</td>
+      <td>4.434816</td>
+      <td>75.0</td>
+      <td>0.1</td>
+      <td>2.2</td>
+      <td>0</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
