@@ -58,7 +58,7 @@ streamlit run src/streamlit_app.py
 
 ## Data
 
-This project uses MIMIC-IV and MIMIC-IV-ED, which require PhysioNet credentialing and a signed
+This project uses MIMIC-IV and MIMIC-ED, which require PhysioNet credentialing and a signed
 data use agreement. Raw data is not included in this repo and was never uploaded anywhere -
 only the processing code is here. If you have your own credentialed access, the raw CSVs need
 to sit in a local `MIMIC-IV Dataset` folder referenced at the top of the extraction scripts.
