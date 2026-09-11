@@ -1,0 +1,4 @@
+variant,n_features,auprc,auc_roc,precision_aki,recall_aki
+Full model (with dbp_count),104,0.7225,0.8507,0.5943,0.6936
+Ablated model (without dbp_count),103,0.7224,0.8506,0.5945,0.6958
+Absolute change (ablated - full),-1,-0.0001,-0.0001,0.0002,0.0022

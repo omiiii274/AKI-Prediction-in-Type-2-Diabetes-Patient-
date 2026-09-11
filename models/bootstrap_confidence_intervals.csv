@@ -1,0 +1,4 @@
+model,auprc,auprc_ci_low,auprc_ci_high,auc_roc,auc_roc_ci_low,auc_roc_ci_high,n_bootstrap_iterations_used
+Logistic Regression,0.6661,0.6367,0.6974,0.8224,0.8052,0.8397,1000
+Random Forest,0.6809,0.6503,0.7095,0.828,0.8109,0.8448,1000
+XGBoost,0.7225,0.6949,0.749,0.8507,0.8355,0.8664,1000

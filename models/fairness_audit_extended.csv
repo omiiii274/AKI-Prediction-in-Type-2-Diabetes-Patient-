@@ -1,0 +1,5 @@
+dimension,group,n,positive_prediction_rate,recall_sensitivity,false_positive_rate
+age,Age <65,1241,0.195,0.5983,0.1038
+age,Age >=65,2588,0.3141,0.7259,0.1688
+sex,Female,1571,0.2502,0.6801,0.1283
+sex,Male,2258,0.2932,0.702,0.1593
