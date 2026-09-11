@@ -1,65 +1,51 @@
-import streamlit as st  # I use Streamlit to build the interactive AKI prediction interface.
-import pandas as pd     # I use pandas to prepare model inputs and display tabular results.
-import numpy as np      # I use NumPy to calculate bar positions in grouped comparison charts.
-import joblib           # I use joblib to load the trained models and preprocessing objects.
-import matplotlib.pyplot as plt  # I use Matplotlib for static evaluation and SHAP charts.
-import shap              # I use SHAP to explain how features influence model predictions.
-import time              # I use time to measure prediction latency.
-import plotly.graph_objects as go  # I use Plotly to create the interactive risk gauge.
-import os                # I use os to check whether saved SHAP assets are available.
+import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
+import matplotlib.pyplot as plt
+import shap
+import time
+import plotly.graph_objects as go
+import os
 
 
 # ============================================================
 # PAGE CONFIG
 # ============================================================
-# st.set_page_config() defines the browser-tab title and gives charts and tables more horizontal
-# space by using the "wide" layout instead of Streamlit's default narrow, centred column.
+# wide layout gives the charts/tables more room than Streamlit's default narrow column
 st.set_page_config(page_title="AKI Risk Predictor", layout="wide")
 
 
 # ============================================================
 # LOAD MODELS AND DATA
 # ============================================================
-# @st.cache_resource keeps loaded model objects (which are Python objects, not plain data) in
-# memory between Streamlit reruns. This is important because every single widget interaction
-# (clicking a button, moving a dropdown) causes Streamlit to rerun the entire script from top to
-# bottom, and without caching, all four models would be reloaded from disk on every click.
+# Streamlit reruns the whole script on every click, so caching stops the models
+# and dataset getting reloaded from disk every single time.
 @st.cache_resource
 def load_models():
-    # Load the three main comparison models trained on the full clinical feature set.
     rf_model = joblib.load("models/random_forest.joblib")
     xgb_model = joblib.load("models/xgboost.joblib")
     lr_model = joblib.load("models/baseline_logistic_regression.joblib")
-    # The scaler is needed because Logistic Regression was trained on standardised features,
-    # unlike the two tree-based models which use the raw feature values directly.
-    scaler = joblib.load("models/scaler.joblib")
+    scaler = joblib.load("models/scaler.joblib")  # only LR needs this
     return rf_model, xgb_model, lr_model, scaler
 
 
-# @st.cache_data is the correct decorator (rather than @st.cache_resource) for the dataframe,
-# because Streamlit can safely serialise and hash plain data like a DataFrame, whereas trained
-# model objects are better handled with @st.cache_resource.
 @st.cache_data
 def load_data():
     df = pd.read_parquet("data/processed/final_feature_matrix.parquet")
-    # KDIGO stage 0 means no AKI, and any stage 1-3 means AKI occurred. This line converts the
-    # four-level KDIGO stage into a single binary label the models were actually trained to predict.
     df['aki_binary'] = (df['kdigo_stage'] > 0).astype(int)
     return df
 
 
-# This model is separate from the main XGBoost model above. It was retrained using only the
-# seven features a clinician can realistically type in by hand, so that the Clinician tab's
-# prediction never silently relies on cohort-average values the clinician never sees.
+# Separate, smaller model trained only on the 7 fields a doctor can actually
+# type in - Clinician tab shouldn't be silently filling in cohort averages.
 @st.cache_resource
 def load_clinician_model():
     return joblib.load("models/clinician_xgboost.joblib")
 
 
-# The symptom model needs three saved objects together, not just the classifier. The TF-IDF
-# vectoriser must be the exact one fitted during training, because it defines which words map to
-# which numeric columns; using a freshly created vectoriser here would produce a completely
-# different (and meaningless) feature space.
+# Need the exact fitted TF-IDF vectoriser from training, not a fresh one,
+# otherwise the word-to-column mapping won't match.
 @st.cache_resource
 def load_symptom_model():
     model = joblib.load("models/symptom_xgboost.joblib")
@@ -68,8 +54,6 @@ def load_symptom_model():
     return model, tfidf, vitals_cols
 
 
-# Actually call each loader function once. Because of the caching decorators above, these heavy
-# operations (reading files from disk) will only genuinely run the first time the app starts.
 rf_model, xgb_model, lr_model, scaler = load_models()
 df = load_data()
 clinician_model = load_clinician_model()
@@ -79,17 +63,12 @@ symptom_model, symptom_tfidf, symptom_vitals_cols = load_symptom_model()
 # ============================================================
 # FEATURE COLUMN ALIGNMENT
 # ============================================================
-# feature_names_in_ is an attribute scikit-learn/XGBoost models store automatically after
-# training, listing the exact columns (in the exact order) the model expects. Using this instead
-# of manually retyping a column list prevents a silent mismatch if the training pipeline ever
-# changes which columns are included.
+# feature_names_in_ stores the exact columns the model was trained on, in order -
+# using this instead of retyping the list avoids a silent mismatch later.
 if hasattr(xgb_model, 'feature_names_in_'):
     feature_cols = list(xgb_model.feature_names_in_)
 else:
-    # This is a fallback path only used if the model object doesn't expose feature_names_in_
-    # (for example, with an older library version). It manually excludes identifier columns
-    # (subject_id, hadm_id), the raw diagnosis code, the outcome label itself, and other metadata
-    # that must never be fed into the model as if it were a predictive feature.
+    # fallback for older library versions that don't expose feature_names_in_
     exclude_cols = ['subject_id', 'hadm_id', 'icd_code', 'icd_version', 'kdigo_stage',
                     'aki_binary', 'icu_intime', 'dod', 'gender']
     feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype in ['int64', 'float64', 'int32']]
@@ -99,12 +78,9 @@ else:
 # PLOTLY RISK GAUGE METER (shared helper used by all three tabs)
 # ============================================================
 def render_gauge_meter(risk_proba):
-    # Convert the model's 0-to-1 probability into a 0-to-100 percentage for display.
     risk_pct = risk_proba * 100
 
-    # These thresholds turn a continuous probability into three clinically meaningful bands, and
-    # the same cut-points (0.3 and 0.6) are reused consistently for the gauge colour, the text
-    # label, and the background shading bands further down.
+    # same 0.3/0.6 cut-points reused for the colour, label, and shaded bands below
     if risk_proba < 0.3:
         bar_color = "#2ecc71"       # green
         risk_label = "LOW RISK"
@@ -115,8 +91,7 @@ def render_gauge_meter(risk_proba):
         bar_color = "#e74c3c"       # red
         risk_label = "HIGH RISK"
 
-    # go.Indicator is Plotly's built-in gauge/dial chart type. Passing mode="gauge+number" draws
-    # both the circular dial and the large numeric percentage together in one component.
+    # Plotly's built-in gauge/dial type - draws the dial and the number together
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=risk_pct,
@@ -124,12 +99,11 @@ def render_gauge_meter(risk_proba):
         title={'text': f"<b>{risk_label}</b>", 'font': {'size': 20, 'color': bar_color}},
         gauge={
             'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "gray"},
-            'bar': {'color': bar_color, 'thickness': 0.35},   # the solid needle/fill of the dial
+            'bar': {'color': bar_color, 'thickness': 0.35},
             'bgcolor': "white",
             'borderwidth': 1,
             'bordercolor': "#e0e0e0",
-            # These faint background colour bands visually mark the low/moderate/high zones on
-            # the dial face itself, using the exact same 30 and 60 thresholds used above.
+            # faint shaded zones on the dial face, same 30/60 thresholds as above
             'steps': [
                 {'range': [0, 30], 'color': 'rgba(46, 204, 113, 0.20)'},
                 {'range': [30, 60], 'color': 'rgba(243, 156, 18, 0.20)'},
@@ -138,8 +112,7 @@ def render_gauge_meter(risk_proba):
         }
     ))
 
-    # Layout tweaks: a fixed compact height, tight margins, a transparent background so the gauge
-    # blends into the Streamlit page rather than showing a white rectangle, and a plain font.
+    # transparent background so it blends into the page instead of showing a white box
     fig.update_layout(
         height=260,
         margin=dict(l=30, r=30, t=40, b=10),
@@ -150,10 +123,10 @@ def render_gauge_meter(risk_proba):
 
 
 # ============================================================
-# ROLE SELECTOR (acts as a lightweight substitute for a login system)
+# ROLE SELECTOR - substitute for a proper login system
 # ============================================================
-# The value chosen here in the sidebar determines which of the three if/elif/else branches below
-# actually runs, so the app behaves like three separate pages sharing one codebase.
+# whatever is picked here controls which if/elif/else branch runs below,
+# so this basically behaves like three separate pages in one script
 st.sidebar.title("AKI Risk Predictor")
 role = st.sidebar.radio("I am a:", ["Researcher", "Clinician", "Daily User"])
 
@@ -165,16 +138,12 @@ if role == "Researcher":
     st.title("Clinical Research View")
     st.caption("Cohort-level model performance and patient-level SHAP explanations.")
 
-    # This function rebuilds the exact same train/test split used during model training, so any
-    # evaluation shown here is computed on the genuine held-out test set, not on data the models
-    # have already seen. @st.cache_data means this split is only actually computed once.
+    # rebuild the same split used in training so this is evaluated on the real held-out set
     @st.cache_data
     def get_test_set():
         from sklearn.model_selection import train_test_split
-        # Splitting is done by subject_id (patient), not hadm_id (admission), because several
-        # patients in this cohort have more than one ICU admission. Splitting by admission would
-        # risk the same patient appearing in both the training and test sets, which is a form of
-        # data leakage that would artificially inflate the reported performance.
+        # split by patient (subject_id), not admission - some patients have multiple
+        # ICU stays, and splitting by admission would leak the same patient into both sets
         patient_aki_status = df.groupby('subject_id')['aki_binary'].max().reset_index()
         patient_aki_status.columns = ['subject_id', 'patient_ever_aki']
         train_subjects, test_subjects = train_test_split(
@@ -225,9 +194,8 @@ if role == "Researcher":
     ])
     st.dataframe(styled_df, use_container_width=True)
 
-    # A short caption calling out the single most important nuance in this table: XGBoost and
-    # Random Forest's AUPRC intervals overlap, so XGBoost cannot be claimed as statistically
-    # better on this metric alone, only as having the higher point estimate.
+    # flagging the overlap explicitly - XGBoost isn't proven statistically better here,
+    # just has the higher point estimate
     st.caption(
         "Confidence intervals obtained via 1,000-iteration bootstrap resampling of the held-out "
         "test set. Note that XGBoost's and Random Forest's AUPRC intervals overlap, meaning the "
@@ -235,16 +203,12 @@ if role == "Researcher":
     )
 
     # ---------------- BOOTSTRAP CI ERROR-BAR CHART ----------------
-    # This whole chart is placed inside a collapsed st.expander so it doesn't lengthen the page
-    # for a reader who is happy with just the table above, but is one click away for anyone who
-    # wants the visual.
+    # kept collapsed so it doesn't push the page down for anyone who's happy with the table
     with st.expander("View Bootstrap Confidence Interval Chart", expanded=False):
         fig_ci, axes_ci = plt.subplots(1, 2, figsize=(11, 4.5))
         colors_ci = ['#4C72B0', '#55A868', '#8172B2']
 
-        # yerr takes the distance from the bar's top down to the lower bound, and up to the upper
-        # bound, which is why it's calculated as two separate subtractions rather than the raw CI
-        # values themselves.
+        # yerr wants the distance from the bar top to each bound, not the raw CI values
         axes_ci[0].bar(
             ci_df['model'], ci_df['auprc'],
             yerr=[ci_df['auprc'] - ci_df['auprc_ci_low'], ci_df['auprc_ci_high'] - ci_df['auprc']],
@@ -269,8 +233,6 @@ if role == "Researcher":
                             # slowly accumulate unused figure objects.
 
         # ---------------- PLAIN MODEL COMPARISON TABLE (point estimates only) ----------------
-        # A second, simpler version of the table (no confidence intervals) is shown here for
-        # anyone who has expanded this section and wants the plain numbers alongside the chart.
         styled_df = comparison_df.style.set_properties(
             subset=['auprc', 'auc_roc', 'precision_aki', 'recall_aki'],
             **{'text-align': 'center'}
@@ -283,9 +245,7 @@ if role == "Researcher":
         st.dataframe(styled_df, use_container_width=True)
 
         # ---------------- BENCHMARK CONTEXT ----------------
-        # This caption directly answers "how should a researcher interpret these numbers?" by
-        # comparing this dissertation's results against Tomašev et al. (2019), a much larger,
-        # general-population benchmark study, and explaining why a direct comparison is limited.
+        # compares my results against Tomašev et al. (2019) so the numbers have context
         st.caption("""
         Benchmark context: Tomašev et al. (2019) achieved a high discrimination performance (AUC-ROC = 0.93) using a deep recurrent architecture trained on a multi-center longitudinal dataset for general AKI detection. In contrast, our XGBoost baseline yielded an AUC-ROC of 0.85 within a single-center cohort restricted exclusively to Type 2 Diabetes Mellitus (T2DM) patients.
         Direct performance comparisons are limited due to key methodological differences: Tomašev et al. leveraged continuous sequential EHR streams across a broad inpatient population, whereas this study evaluates cross-sectional tabular features in a high-risk subgroup with pre-existing metabolic and microvascular vulnerability. Rather than competing with general-population deep learning models, our findings establish a specialized, interpretable benchmark tailored specifically to T2DM-associated AKI risk, laying the groundwork for targeted clinical decision support.
@@ -317,9 +277,7 @@ if role == "Researcher":
             plt.close(fig_comp)
 
             # ---------------- ABBREVIATION GLOSSARY ----------------
-            # Added after supervisor feedback that a researcher without a clinical background
-            # cannot be expected to already know what sbp/dbp/map etc. stand for. Kept inside a
-            # nested, collapsed expander so it's available without cluttering the main view.
+            # added after supervisor feedback - not everyone will know sbp/dbp/map etc.
             with st.expander("What do these abbreviations mean?"):
                 st.markdown("""
                 | Abbreviation | Meaning |
@@ -342,8 +300,7 @@ if role == "Researcher":
                 """)
 
     # ---------------- CLICKABLE MODEL SELECTOR BUTTONS ----------------
-    # These three buttons act like tabs within the tab: clicking one stores the chosen model's
-    # name in Streamlit's session_state, which persists across reruns until explicitly cleared.
+    # stores the chosen model in session_state so it survives the rerun on every click
     st.write("**Click a model to see its detailed results:**")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -368,9 +325,8 @@ if role == "Researcher":
         selected = st.session_state['selected_model']
         st.markdown(f"### {selected} — Detailed Results")
 
-        # Only Logistic Regression needs its input scaled before prediction, because it was
-        # trained on standardised features; the two tree-based models split on raw feature
-        # values directly and don't require this step.
+        # only LR needs scaling - it was trained on standardised features,
+        # the tree models split on raw values directly
         if selected == 'Logistic Regression':
             X_test_scaled = scaler.transform(X_test)
             y_pred = lr_model.predict(X_test_scaled)
@@ -431,9 +387,7 @@ if role == "Researcher":
             fig3, ax3 = plt.subplots(figsize=(4, 4))
             precision_vals, recall_vals, _ = precision_recall_curve(y_test, y_pred_proba)
             ax3.plot(recall_vals, precision_vals, color='darkgreen', lw=2, label=f'AUPRC = {auprc:.3f}')
-            # The horizontal dashed line marks the "no-skill" baseline for precision, which equals
-            # the overall prevalence of AKI in this test set — any model doing better than chance
-            # should have its curve sit above this line.
+            # dashed line = the no-skill baseline, equal to AKI prevalence in the test set
             ax3.axhline(y=y_test.mean(), color='gray', lw=1, linestyle='--')
             ax3.set_xlabel('Recall')
             ax3.set_ylabel('Precision')
@@ -546,10 +500,8 @@ if role == "Researcher":
         st.pyplot(fig_f)
         plt.close(fig_f)
 
-    # This caption deliberately avoids concluding that the model is "biased" — it explicitly
-    # notes the gap could reflect genuine clinical risk difference rather than unfairness, and
-    # points to the report for the fuller discussion, consistent with the dissertation's
-    # cautious, evidence-based interpretation throughout.
+    # deliberately not calling this "bias" - could just as easily be genuine clinical
+    # risk difference, full discussion is in the report
     st.caption(
         "The age-based gap is substantially larger than the sex-based gap, suggesting the "
         "disparity observed is concentrated in the age dimension rather than reflecting a "
@@ -621,9 +573,8 @@ if role == "Researcher":
 elif role == "Clinician":
     st.title("Clinician Input View")
     st.caption("Enter patient values manually to get a risk prediction and recommendations.")
-    # This message is important for transparency: unlike an earlier design (rejected during
-    # development), this version genuinely uses only what the clinician types in, with no hidden
-    # cohort-average values silently filling in the rest of the model's inputs.
+    # earlier version filled gaps with cohort averages - dropped that, this only uses
+    # what the clinician actually types in
     st.info("This prediction is based entirely on the values you enter below — no other patient data is assumed or imputed.")
 
     # Two columns split the eight input fields into a compact, side-by-side layout rather than
@@ -642,9 +593,7 @@ elif role == "Clinician":
         hr_mean = st.number_input("Heart Rate (mean)", min_value=0.0, max_value=250.0, value=85.0)
 
     if st.button("Predict Risk", key="clinician_predict"):
-        # The dictionary keys here must exactly match the column names (and the model doesn't
-        # actually require a specific order here since we're building a DataFrame with named
-        # columns, but they must match the names used when clinician_xgboost.joblib was trained).
+        # keys have to match the column names clinician_xgboost.joblib was trained on
         input_row = pd.DataFrame([{
             'age_at_admission': age,
             'baseline_creatinine': baseline_creatinine,
@@ -761,9 +710,8 @@ elif role == "Daily User":
         risk_meds = st.checkbox("Taking ACE inhibitors, NSAIDs, or diuretics")
 
     if st.button("Check My Risk", key="patient_check"):
-        # Each checked checkbox is translated into short keyword phrases that overlap with the
-        # vocabulary the TF-IDF vectoriser was actually trained on (from MIMIC-IV-ED chief
-        # complaints), so a checkbox-only submission still produces meaningful model input.
+        # turning checkboxes into phrases that overlap with the MIMIC-IV-ED vocabulary the
+        # TF-IDF vectoriser was trained on, so a checkbox-only submission still means something
         checkbox_symptoms = []
         if symptom_pee: checkbox_symptoms.append("peeing less urine output reduced")
         if symptom_thirst: checkbox_symptoms.append("thirsty")
@@ -779,9 +727,8 @@ elif role == "Daily User":
         if not combined_text:
             st.warning("Please describe your symptoms or select from the checkboxes above.")
         else:
-            # transform() (not fit_transform()) is used deliberately, so the input text is mapped
-            # into the exact same feature space the model was trained on, rather than fitting a
-            # new, incompatible vocabulary from this single piece of text.
+            # transform(), not fit_transform() - has to map onto the same feature space
+            # the model was trained on, not fit a new vocabulary from one sentence
             text_features = symptom_tfidf.transform([combined_text])
             X_input = pd.DataFrame(
                 text_features.toarray(),
@@ -795,10 +742,8 @@ elif role == "Daily User":
 
             st.plotly_chart(render_gauge_meter(risk_proba), use_container_width=True)
 
-            # Because the underlying symptom-only model is known (from evaluation) to perform
-            # only marginally above random chance, this tab does not rely on the model probability
-            # alone. Two specific, clinically urgent symptoms independently escalate the
-            # recommendation regardless of what the model itself predicts.
+            # the symptom model barely beats random chance (see evaluation), so these two
+            # urgent symptoms override its probability regardless of what it predicts
             urgent_flag = symptom_pee or symptom_breathless
 
             if risk_proba >= 0.6 or urgent_flag:

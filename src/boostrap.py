@@ -5,9 +5,6 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 import joblib
 import os
 
-
-# PATH CONFIGURATION
-# Same paths and conventions as the rest of the src/ scripts.
 INPUT_PATH = "data/processed/final_feature_matrix.parquet"
 MODEL_DIR = "models"
 OUTPUT_DIR = "models"
@@ -20,11 +17,9 @@ print("=" * 60)
 print("BOOTSTRAP 95% CONFIDENCE INTERVALS (AUPRC / AUC-ROC)")
 print("=" * 60)
 
-
-# 1. LOAD DATA AND RECREATE THE SAME TEST SET
-# I recreate the exact patient-level split used in train_xgBoost.py /
-# train_random_forest.py / baseline_model.py so the bootstrap runs on
-# the identical held-out test set that produced the reported point estimates.
+# Rebuild the exact same patient-level split I used for training, so the
+# bootstrap is running on the same held-out test set that produced my
+# original AUPRC/AUC-ROC numbers.
 df = pd.read_parquet(INPUT_PATH)
 df['aki_binary'] = (df['kdigo_stage'] > 0).astype(int)
 
@@ -41,10 +36,9 @@ train_subjects, test_subjects = train_test_split(
 test_df = df[df['subject_id'].isin(test_subjects)].copy()
 print(f"[INFO] Test set: {len(test_df):,} admissions from {test_df['subject_id'].nunique():,} patients")
 
-
-# 2. LOAD THE THREE TRAINED MODELS
-# I load the models exactly as saved, rather than retraining, so the
-# bootstrap reflects uncertainty in the *evaluation*, not in training.
+# Loading the already-trained models here, not retraining. Bootstrap is only
+# meant to measure how much the evaluation number could move on a different
+# sample of the test set, not to touch training at all.
 lr_model = joblib.load(os.path.join(MODEL_DIR, "baseline_logistic_regression.joblib"))
 rf_model = joblib.load(os.path.join(MODEL_DIR, "random_forest.joblib"))
 xgb_model = joblib.load(os.path.join(MODEL_DIR, "xgboost.joblib"))
@@ -53,9 +47,6 @@ scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.joblib"))
 
 print("[INFO] Loaded Logistic Regression, Random Forest, and XGBoost models.")
 
-
-# 3. BUILD FEATURE MATRICES
-# Same exclude_cols convention as train_xgBoost.py / treeshap_analysis.py.
 exclude_cols = [
     'subject_id', 'hadm_id', 'icd_code', 'icd_version', 'kdigo_stage',
     'aki_binary', 'icu_intime', 'dod', 'gender'
@@ -65,13 +56,11 @@ feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype i
 X_test = test_df[feature_cols]
 y_test = test_df['aki_binary'].values
 
-X_test_scaled = scaler.transform(X_test)  # for Logistic Regression only
+X_test_scaled = scaler.transform(X_test)  # only LR needs the scaled version
 
-
-# 4. COMPUTE PREDICTED PROBABILITIES ONCE
-# I compute predictions a single time on the full test set, then resample
-# the *indices* for each bootstrap iteration. This is much faster than
-# re-running .predict_proba() 1,000 times per model and gives identical results.
+# Predicting once here instead of inside the loop. Resampling the 1,000
+# probability arrays with numpy indexing is a lot faster than calling
+# predict_proba() 1,000 times per model, and gives the exact same result.
 lr_proba = lr_model.predict_proba(X_test_scaled)[:, 1]
 rf_proba = rf_model.predict_proba(X_test)[:, 1]
 xgb_proba = xgb_model.predict_proba(X_test)[:, 1]
@@ -82,12 +71,9 @@ model_probas = {
     'XGBoost': xgb_proba
 }
 
-
-# 5. BOOTSTRAP RESAMPLING
-# For each of 1,000 iterations, I resample the test set WITH replacement
-# and recompute AUPRC / AUC-ROC. The spread of these 1,000 values gives
-# an empirical estimate of how much the metric would move under a
-# different random sample of patients.
+# Resample the test set WITH replacement 1,000 times and recompute AUPRC/
+# AUC-ROC each time. The spread across those 1,000 runs is what tells us
+# how much the metric could shift with a different random sample of patients.
 n = len(y_test)
 results = {name: {'auprc': [], 'auc_roc': []} for name in model_probas}
 
@@ -99,8 +85,8 @@ for i in range(N_BOOTSTRAPS):
     idx = rng.randint(0, n, size=n)
     y_boot = y_test[idx]
 
-    # Skip the (extremely rare) resample with only one class present,
-    # since AUPRC/AUC-ROC are undefined in that case.
+    # With replacement resampling can occasionally pull only one class -
+    # AUPRC/AUC-ROC don't make sense there, so just skip that iteration.
     if len(np.unique(y_boot)) < 2:
         continue
 
@@ -112,11 +98,9 @@ for i in range(N_BOOTSTRAPS):
     if (i + 1) % 200 == 0:
         print(f"  ...completed {i + 1}/{N_BOOTSTRAPS} resamples")
 
-
-# 6. SUMMARISE: POINT ESTIMATE + 95% PERCENTILE INTERVAL
-# The point estimate is computed on the ORIGINAL (non-resampled) test set,
-# matching the number already reported in Table 2. The CI is the
-# [2.5th, 97.5th] percentile of the bootstrap distribution around it.
+# Point estimate comes from the original (non-resampled) test set so it
+# matches what's already reported in my results table. The 95% CI is just
+# the 2.5th/97.5th percentile of the bootstrap distribution around it.
 rows = []
 for name, proba in model_probas.items():
     point_auprc = average_precision_score(y_test, proba)
