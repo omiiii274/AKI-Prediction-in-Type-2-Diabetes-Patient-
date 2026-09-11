@@ -62,9 +62,3 @@ This project uses MIMIC-IV and MIMIC-IV-ED, which require PhysioNet credentialin
 data use agreement. Raw data is not included in this repo and was never uploaded anywhere -
 only the processing code is here. If you have your own credentialed access, the raw CSVs need
 to sit in a local `MIMIC-IV Dataset` folder referenced at the top of the extraction scripts.
-
-## A note on some of the file names
-
-A few scripts have inconsistent naming (`boostrap.py`, `train_xgBoost.py`) - these are typos
-I made early on and didn't rename later since other scripts already imported/referenced them by
-that exact name. Left as-is rather than risk breaking something close to submission.
